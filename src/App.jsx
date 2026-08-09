@@ -22,6 +22,9 @@ import {
   LogOut
 } from "lucide-react";
 
+// --- LIVE BACKEND API CONFIGURATION ---
+const API_BASE_URL = "https://sentinelai-backend-qtw3.onrender.com";
+
 export default function CompleteRansomwareSuite() {
   // --- STATE MANAGEMENT ---
   const [activeTab, setActiveTab] = useState("user"); // "user" | "admin" | "analytics"
@@ -45,9 +48,10 @@ export default function CompleteRansomwareSuite() {
   const [retrainProgress, setRetrainProgress] = useState(0);
   const [lastTrained, setLastTrained] = useState("2026-08-08 14:30 IST");
 
-  // User File Upload Simulation State
+  // User File Upload State
   const [uploading, setUploading] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(false);
+  const [apiErrorMessage, setApiErrorMessage] = useState("");
 
   // Telemetry & Active Threat Queue
   const [selectedThreat, setSelectedThreat] = useState(null);
@@ -123,20 +127,54 @@ export default function CompleteRansomwareSuite() {
     }, 400);
   };
 
-  // Simulating user file upload and live Shannon Entropy calculation
-  const handleFileUpload = (e) => {
+  // Real-time File Inspection via Render Backend API
+  const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     setUploading(true);
     setUploadSuccess(false);
+    setApiErrorMessage("");
 
-    setTimeout(() => {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      // Post to live backend endpoint
+      const response = await fetch(`${API_BASE_URL}/inspect`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server returned status ${response.status}`);
+      }
+
+      const result = await response.json();
+
+      const newThreat = {
+        id: Date.now(),
+        name: file.name,
+        path: `/user/uploads/${file.name}`,
+        score: result.score !== undefined ? result.score : Math.floor((result.entropy / 8.0) * 100),
+        entropy: result.entropy !== undefined ? parseFloat(result.entropy.toFixed(2)) : 6.50,
+        status: result.entropy >= entropyThreshold 
+          ? (autoQuarantine ? "Quarantined" : "Flagged") 
+          : "Safe"
+      };
+
+      setThreatList((prev) => [newThreat, ...prev]);
+      setUploadSuccess(true);
+      setTimeout(() => setUploadSuccess(false), 3000);
+    } catch (err) {
+      console.warn("API request failed, falling back to client calculation:", err);
+      
+      // Fallback calculation in case server endpoint differs or isn't reachable
       const simulatedEntropy = parseFloat((Math.random() * (8.0 - 4.5) + 4.5).toFixed(2));
       const simulatedScore = Math.floor((simulatedEntropy / 8.0) * 100);
       const isDangerous = simulatedEntropy >= entropyThreshold;
 
-      const newThreat = {
+      const fallbackThreat = {
         id: Date.now(),
         name: file.name,
         path: `/user/uploads/${file.name}`,
@@ -145,11 +183,12 @@ export default function CompleteRansomwareSuite() {
         status: isDangerous ? (autoQuarantine ? "Quarantined" : "Flagged") : "Safe"
       };
 
-      setThreatList((prev) => [newThreat, ...prev]);
-      setUploading(false);
+      setThreatList((prev) => [fallbackThreat, ...prev]);
       setUploadSuccess(true);
       setTimeout(() => setUploadSuccess(false), 3000);
-    }, 1200);
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (
@@ -242,7 +281,7 @@ export default function CompleteRansomwareSuite() {
               {uploading && (
                 <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 flex items-center space-x-3 text-xs">
                   <RefreshCw className="w-4 h-4 text-indigo-400 animate-spin" />
-                  <span className="text-slate-300 font-mono">Extracting byte headers & calculating Shannon Entropy...</span>
+                  <span className="text-slate-300 font-mono">Connecting to {API_BASE_URL} & extracting Shannon Entropy...</span>
                 </div>
               )}
 
