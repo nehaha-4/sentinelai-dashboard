@@ -1,29 +1,73 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { 
   ShieldAlert, 
   Settings, 
   UserCheck, 
   RefreshCw, 
-  Download, 
   AlertTriangle, 
-  X, 
   Lock, 
-  Sliders, 
-  Database,
   Cpu,
   Upload,
   FileCheck,
   Activity,
   BarChart2,
-  TrendingUp,
   Radio,
   KeyRound,
   ShieldCheck,
   LogOut,
   Bot,
   Ban,
-  MessageSquare
+  Wifi,
+  WifiOff
 } from "lucide-react";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ReferenceLine
+} from "recharts";
+
+// --- REAL SHANNON ENTROPY CALCULATION ---
+// Reads the actual byte distribution of a file and computes entropy in
+// bits/byte. Packed/encrypted/compressed data (typical of ransomware
+// payloads) trends toward 7.5-8.0. Plain text/config files trend low (2-5).
+function calculateShannonEntropy(bytes) {
+  const freq = new Array(256).fill(0);
+  for (let i = 0; i < bytes.length; i++) {
+    freq[bytes[i]]++;
+  }
+  let entropy = 0;
+  const len = bytes.length;
+  for (let i = 0; i < 256; i++) {
+    if (freq[i] === 0) continue;
+    const p = freq[i] / len;
+    entropy -= p * Math.log2(p);
+  }
+  return entropy;
+}
+
+// --- SIMULATED LIVE TELEMETRY GENERATOR ---
+// Stands in for a real backend push (WebSocket/SSE) from an actual file
+// watcher, network sensor, or endpoint agent. To go live for real: replace
+// the setInterval block in the useEffect below with a socket listener that
+// calls the same pushThreatEvent() function when the backend emits an event.
+const SYSTEM_FILE_POOL = [
+  "svc_worker.dll", "update_cache.tmp", "session_store.db", "config.ini",
+  "backup_job.log", "installer_patch.msi", "driver_hook.sys", "report_export.pdf",
+  "temp_archive.zip", "auth_token.dat"
+];
+
+function generateSyntheticEvent() {
+  const entropy = parseFloat((Math.random() * (8.0 - 3.5) + 3.5).toFixed(2));
+  const name = SYSTEM_FILE_POOL[Math.floor(Math.random() * SYSTEM_FILE_POOL.length)];
+  return { name, entropy };
+}
 
 export default function CompleteRansomwareSuite() {
   // --- STATE MANAGEMENT ---
@@ -31,28 +75,26 @@ export default function CompleteRansomwareSuite() {
   const [userRole, setUserRole] = useState("Analyst");
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
 
-  // Auth Modal State
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [pinInput, setPinInput] = useState("");
   const [authError, setAuthError] = useState("");
 
-  // Dynamic Threshold Shared State
   const [entropyThreshold, setEntropyThreshold] = useState(7.2);
 
-  // System Automation Toggles
   const [autoQuarantine, setAutoQuarantine] = useState(true);
   const [aiNegotiation, setAiNegotiation] = useState(true);
 
-  // Model Retraining State
   const [isRetraining, setIsRetraining] = useState(false);
   const [retrainProgress, setRetrainProgress] = useState(0);
   const [lastTrained, setLastTrained] = useState("2026-08-08 14:30 IST");
 
-  // User File Upload Simulation State
   const [uploading, setUploading] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState(false);
+  const [uploadError, setUploadError] = useState("");
 
-  // Telemetry & Active Threat Queue
+  // Live monitoring toggle — drives the simulated real-time feed
+  const [liveMonitoring, setLiveMonitoring] = useState(true);
+
   const [selectedThreat, setSelectedThreat] = useState(null);
   const [threatList, setThreatList] = useState([
     { id: 1, name: "payload_v2.exe", path: "/tmp/payload_v2.exe", score: 94, entropy: 7.85, status: "KILLED & QUARANTINED", pid: 4092, time: "10:30" },
@@ -60,14 +102,67 @@ export default function CompleteRansomwareSuite() {
     { id: 3, name: "svc_host_patch.dll", path: "/sys/svc_host_patch.dll", score: 65, entropy: 6.91, status: "Monitored", pid: 1044, time: "10:15" }
   ]);
 
-  // AI Negotiation Chat Log State (Llama 3 Engine)
   const [chatLogs, setChatLogs] = useState([
     { sender: "System", text: "Malicious payload payload_v2.exe detected. High entropy breach (7.85 bits/byte). Initiating Llama 3 Defense Core..." },
     { sender: "Attacker Note", text: "ALL YOUR FILES ARE ENCRYPTED! Send 0.5 BTC to 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa to restore." },
     { sender: "Llama 3 AI", text: "Automated Response: Decoy acknowledgment sent to threat actor C2 node. Delaying payload payload_v2.exe execution sequence..." }
   ]);
 
-  // Auth Handlers
+  const idCounter = useRef(1000);
+
+  // Shared handler: takes a {name, entropy} pair from ANY source (real
+  // upload or simulated feed) and pushes it through detection + prevention
+  // + negotiation exactly the same way. This is what makes the graphs
+  // "live" — every event, real or simulated, flows through here into
+  // threatList, and every chart reads straight from threatList.
+  const pushThreatEvent = (name, entropy) => {
+    const score = Math.min(100, Math.round((entropy / 8.0) * 100));
+    const isDangerous = entropy >= entropyThreshold;
+    const now = new Date();
+    const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+    idCounter.current += 1;
+    const generatedPID = Math.floor(Math.random() * 8000) + 1000;
+
+    const newThreat = {
+      id: idCounter.current,
+      name,
+      path: `/monitored/${name}`,
+      score,
+      entropy,
+      status: isDangerous ? (autoQuarantine ? "KILLED & QUARANTINED" : "Flagged") : "Safe",
+      pid: generatedPID,
+      time: timeStr
+    };
+
+    // Keep a rolling window so charts stay readable (last 20 events)
+    setThreatList((prev) => [newThreat, ...prev].slice(0, 20));
+
+    if (isDangerous && aiNegotiation) {
+      setChatLogs((prev) => [
+        { sender: "System", text: `ALERT: ${name} exceeded entropy threshold (${entropy} bits/byte, threshold ${entropyThreshold}).` },
+        { sender: "Llama 3 AI", text: `Automated defense response triggered for ${name}. (Simulated — wire to a real LLM endpoint for live negotiation.)` },
+        ...prev
+      ]);
+    }
+
+    return newThreat;
+  };
+
+  // --- LIVE FEED LOOP ---
+  // Fires a synthetic scan event every few seconds while liveMonitoring is
+  // on. This is the piece that makes detection feel "real-time" instead of
+  // click-triggered. Swap this block for a WebSocket/SSE subscription to
+  // go from simulated to genuinely live.
+  useEffect(() => {
+    if (!liveMonitoring) return;
+    const interval = setInterval(() => {
+      const evt = generateSyntheticEvent();
+      pushThreatEvent(evt.name, evt.entropy);
+    }, 3500);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveMonitoring, entropyThreshold, autoQuarantine, aiNegotiation]);
+
   const handleAdminTabAccess = () => {
     if (isAdminAuthenticated) {
       setActiveTab("admin");
@@ -96,16 +191,6 @@ export default function CompleteRansomwareSuite() {
     setActiveTab("user");
   };
 
-  const downloadReport = (data, filename) => {
-    const element = document.createElement("a");
-    const file = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    element.href = URL.createObjectURL(file);
-    element.download = filename;
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
-  };
-
   const triggerModelRetraining = () => {
     if (!isAdminAuthenticated) return;
     setIsRetraining(true);
@@ -123,48 +208,51 @@ export default function CompleteRansomwareSuite() {
     }, 400);
   };
 
-  // Simulating file upload, live entropy, prevention & AI trigger
+  // Real file upload -> real Shannon entropy -> shared event pipeline
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
     setUploading(true);
     setUploadSuccess(false);
+    setUploadError("");
 
-    setTimeout(() => {
-      const simulatedEntropy = parseFloat((Math.random() * (8.0 - 4.5) + 4.5).toFixed(2));
-      const simulatedScore = Math.floor((simulatedEntropy / 8.0) * 100);
-      const isDangerous = simulatedEntropy >= entropyThreshold;
-      const now = new Date();
-      const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-      const generatedPID = Math.floor(Math.random() * 8000) + 1000;
+    const reader = new FileReader();
 
-      const newThreat = {
-        id: Date.now(),
-        name: file.name,
-        path: `/user/uploads/${file.name}`,
-        score: simulatedScore,
-        entropy: simulatedEntropy,
-        status: isDangerous ? (autoQuarantine ? "KILLED & QUARANTINED" : "Flagged") : "Safe",
-        pid: generatedPID,
-        time: timeStr
-      };
+    reader.onerror = () => {
+      setUploading(false);
+      setUploadError("Failed to read file.");
+    };
 
-      setThreatList((prev) => [newThreat, ...prev]);
+    reader.onload = (event) => {
+      const bytes = new Uint8Array(event.target.result);
 
-      if (isDangerous && aiNegotiation) {
-        setChatLogs((prev) => [
-          { sender: "System", text: `ALERT: ${file.name} exceeded threshold (${simulatedEntropy} bits/byte). Process PID ${generatedPID} terminated!` },
-          { sender: "Llama 3 AI", text: `Llama 3 Agent: Generating autonomous defense response & stalling encryption routines for ${file.name}.` },
-          ...prev
-        ]);
+      if (bytes.length === 0) {
+        setUploading(false);
+        setUploadError("File is empty — nothing to analyze.");
+        return;
       }
+
+      const realEntropy = parseFloat(calculateShannonEntropy(bytes).toFixed(2));
+      pushThreatEvent(file.name, realEntropy);
 
       setUploading(false);
       setUploadSuccess(true);
       setTimeout(() => setUploadSuccess(false), 3000);
-    }, 1200);
+    };
+
+    reader.readAsArrayBuffer(file);
   };
+
+  // Chart data — chronological order (oldest to newest) so the line reads
+  // left-to-right correctly. threatList is newest-first, so reverse it.
+  const chartData = [...threatList].reverse().map((t) => ({
+    time: t.time,
+    entropy: t.entropy,
+    score: t.score,
+    threshold: entropyThreshold,
+    name: t.name
+  }));
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 p-6 space-y-6 font-sans">
@@ -179,7 +267,6 @@ export default function CompleteRansomwareSuite() {
           <p className="text-xs text-slate-400">MHSA-LSTM Core, Shannon Entropy Defense & AI Negotiation Core</p>
         </div>
 
-        {/* Navigation Tabs */}
         <div className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
           <button 
             onClick={() => setActiveTab("user")} 
@@ -214,8 +301,16 @@ export default function CompleteRansomwareSuite() {
           </button>
         </div>
 
-        {/* RBAC Status */}
         <div className="flex items-center space-x-3">
+          <button
+            onClick={() => setLiveMonitoring((v) => !v)}
+            className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl border text-xs font-mono font-bold transition ${liveMonitoring ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400" : "bg-slate-950 border-slate-800 text-slate-500"}`}
+            title="Toggle simulated live telemetry feed"
+          >
+            {liveMonitoring ? <Wifi className="w-3.5 h-3.5 animate-pulse" /> : <WifiOff className="w-3.5 h-3.5" />}
+            <span>{liveMonitoring ? "LIVE" : "PAUSED"}</span>
+          </button>
+
           {isAdminAuthenticated ? (
             <div className="flex items-center space-x-2 bg-emerald-500/10 border border-emerald-500/30 px-3 py-1.5 rounded-xl">
               <ShieldCheck className="w-4 h-4 text-emerald-400" />
@@ -269,6 +364,17 @@ export default function CompleteRansomwareSuite() {
                   <span>File scanned! Automated prevention engine triggered if entropy breached limit.</span>
                 </div>
               )}
+
+              {uploadError && (
+                <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-xl flex items-center space-x-2 text-xs font-mono">
+                  <AlertTriangle className="w-4 h-4" />
+                  <span>{uploadError}</span>
+                </div>
+              )}
+
+              <p className="text-[10px] text-slate-500 font-mono">
+                Background monitor is {liveMonitoring ? "ACTIVE" : "PAUSED"} — synthetic system events feed into the graphs every ~3.5s in addition to anything you upload here.
+              </p>
             </div>
 
             <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl space-y-4">
@@ -388,37 +494,67 @@ export default function CompleteRansomwareSuite() {
         </div>
       )}
 
-      {/* --- TAB 4: VISUAL GRAPH ANALYTICS --- */}
+      {/* --- TAB 4: VISUAL GRAPH ANALYTICS (real, live Recharts) --- */}
       {activeTab === "analytics" && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl space-y-4">
-            <h3 className="text-sm font-bold text-slate-200 flex items-center space-x-2">
-              <TrendingUp className="w-4 h-4 text-indigo-400" />
-              <span>Real-Time Detection Rate</span>
-            </h3>
-            <div className="h-48 flex items-end justify-between space-x-3 pt-6 border-b border-slate-800 px-2">
-              {threatList.slice(0, 6).map((item, index) => (
-                <div key={item.id || index} className="flex-1 flex flex-col items-center gap-2 h-full justify-end">
-                  <div className="w-full bg-indigo-600 rounded-t-lg" style={{ height: `${item.score}%` }}></div>
-                  <span className="text-[10px] font-mono text-slate-400">{item.time}</span>
-                </div>
-              ))}
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-200 flex items-center space-x-2">
+                <BarChart2 className="w-4 h-4 text-indigo-400" />
+                <span>Detection Score by Event</span>
+              </h3>
+              {liveMonitoring && (
+                <span className="text-[10px] font-mono text-emerald-400 flex items-center space-x-1">
+                  <Radio className="w-3 h-3 animate-pulse" />
+                  <span>LIVE</span>
+                </span>
+              )}
+            </div>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="time" tick={{ fill: "#64748b", fontSize: 10 }} />
+                  <YAxis domain={[0, 100]} tick={{ fill: "#64748b", fontSize: 10 }} />
+                  <Tooltip
+                    contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 8, fontSize: 11 }}
+                    labelStyle={{ color: "#94a3b8" }}
+                    formatter={(value, key, props) => [value, `${key} — ${props.payload.name}`]}
+                  />
+                  <Bar dataKey="score" fill="#6366f1" radius={[4, 4, 0, 0]} isAnimationActive={true} animationDuration={400} />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
           </div>
 
           <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl space-y-4">
-            <h3 className="text-sm font-bold text-slate-200 flex items-center space-x-2">
-              <Activity className="w-4 h-4 text-cyan-400" />
-              <span>Shannon Entropy Trend vs Cutoff</span>
-            </h3>
-            <div className="h-48 flex items-end justify-between space-x-3 pt-6 border-b border-slate-800 relative px-2">
-              <div className="absolute w-full border-t-2 border-dashed border-red-500/80 left-0" style={{ bottom: `${((entropyThreshold - 4) / 4) * 100}%` }}></div>
-              {threatList.slice(0, 6).map((item, index) => (
-                <div key={item.id || index} className="flex-1 flex flex-col items-center gap-2 h-full justify-end">
-                  <div className={`w-full rounded-t-lg ${item.entropy >= entropyThreshold ? "bg-red-500" : "bg-cyan-500"}`} style={{ height: `${((item.entropy - 4) / 4) * 100}%` }}></div>
-                  <span className="text-[10px] font-mono text-slate-400">{item.time}</span>
-                </div>
-              ))}
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-200 flex items-center space-x-2">
+                <Activity className="w-4 h-4 text-cyan-400" />
+                <span>Shannon Entropy Trend vs Cutoff</span>
+              </h3>
+              {liveMonitoring && (
+                <span className="text-[10px] font-mono text-emerald-400 flex items-center space-x-1">
+                  <Radio className="w-3 h-3 animate-pulse" />
+                  <span>LIVE</span>
+                </span>
+              )}
+            </div>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                  <XAxis dataKey="time" tick={{ fill: "#64748b", fontSize: 10 }} />
+                  <YAxis domain={[0, 8]} tick={{ fill: "#64748b", fontSize: 10 }} />
+                  <Tooltip
+                    contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 8, fontSize: 11 }}
+                    labelStyle={{ color: "#94a3b8" }}
+                    formatter={(value, key, props) => [value, `${key} — ${props.payload.name}`]}
+                  />
+                  <ReferenceLine y={entropyThreshold} stroke="#ef4444" strokeDasharray="4 4" label={{ value: "Cutoff", fill: "#ef4444", fontSize: 10, position: "right" }} />
+                  <Line type="monotone" dataKey="entropy" stroke="#22d3ee" strokeWidth={2} dot={{ r: 3, fill: "#22d3ee" }} isAnimationActive={true} animationDuration={400} />
+                </LineChart>
+              </ResponsiveContainer>
             </div>
           </div>
         </div>
@@ -431,7 +567,7 @@ export default function CompleteRansomwareSuite() {
             <Radio className="w-4 h-4 text-red-400 animate-pulse" />
             <span>Active Prevention & Telemetry Table</span>
           </h2>
-          <span className="text-xs text-slate-500 font-mono">{threatList.length} total entries logged</span>
+          <span className="text-xs text-slate-500 font-mono">{threatList.length} recent entries (rolling window)</span>
         </div>
         
         <div className="overflow-x-auto">
