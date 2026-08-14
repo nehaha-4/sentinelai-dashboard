@@ -275,17 +275,27 @@ export default function CompleteRansomwareSuite() {
     else setShowAuthModal(true);
   };
 
-  const handleAuthenticate = (e) => {
+  const handleAuthenticate = async (e) => {
     e.preventDefault();
-    if (pinInput === "admin123") {
-      setIsAdminAuthenticated(true);
-      setUserRole("Admin");
-      setShowAuthModal(false);
-      setPinInput("");
-      setAuthError("");
-      setActiveTab("admin");
-    } else {
-      setAuthError("Invalid Security Key. Unauthorized Access Logged.");
+    setAuthError("");
+    try {
+      const res = await fetch("/api/verify-admin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin: pinInput })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setIsAdminAuthenticated(true);
+        setUserRole("Admin");
+        setShowAuthModal(false);
+        setPinInput("");
+        setActiveTab("admin");
+      } else {
+        setAuthError(data.error || "Invalid Security Key. Unauthorized Access Logged.");
+      }
+    } catch (err) {
+      setAuthError("Could not reach the server to verify — check that /api/verify-admin is deployed.");
     }
   };
 
@@ -866,7 +876,7 @@ export default function CompleteRansomwareSuite() {
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-sm w-full space-y-4">
             <h3 className="font-bold text-slate-200 text-sm">Enter Security Key</h3>
             <form onSubmit={handleAuthenticate} className="space-y-3">
-              <input type="password" placeholder="Key (default: admin123)" value={pinInput} onChange={(e) => setPinInput(e.target.value)}
+              <input type="password" placeholder="Enter admin security key" value={pinInput} onChange={(e) => setPinInput(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-slate-100 font-mono outline-none" />
               {authError && <p className="text-[11px] text-red-400">{authError}</p>}
               <button type="submit" className="w-full py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold">Authenticate</button>
