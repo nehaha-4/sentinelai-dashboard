@@ -22,7 +22,9 @@ import {
   Download,
   Send,
   Loader2,
-  Layers
+  Layers,
+  X,
+  Info
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -55,8 +57,6 @@ function calculateShannonEntropy(bytes) {
 
 // ============================================================
 // FILE SIGNATURE (MAGIC BYTE) DETECTION
-// Reads the first few bytes to identify actual file type,
-// independent of the file extension (which can be spoofed).
 // ============================================================
 const SIGNATURES = [
   { bytes: [0x4d, 0x5a], type: "Windows PE Executable (.exe/.dll)", risk: "high" },
@@ -77,10 +77,68 @@ function detectSignature(bytes) {
   return { type: "Unknown / Raw Binary", risk: "unknown" };
 }
 
+function riskForSignatureType(type) {
+  const sig = SIGNATURES.find((s) => s.type === type);
+  return sig ? sig.risk : "unknown";
+}
+
+// ============================================================
+// HUMAN-READABLE EXPLANATION GENERATOR
+// Turns raw numbers into the "why" a person actually needs to
+// understand a detection, plus what the prevention action means.
+// ============================================================
+function explainThreat(item, threshold) {
+  const isDangerous = item.entropy >= threshold;
+  const sigRisk = riskForSignatureType(item.signature);
+  const diff = (item.entropy - threshold).toFixed(2);
+
+  let reasoning = [];
+
+  if (isDangerous) {
+    reasoning.push(
+      `This file's entropy is ${item.entropy} bits/byte, which is ${Math.abs(diff)} above your configured threshold of ${threshold}.`
+    );
+    if (sigRisk === "high") {
+      reasoning.push(
+        `Its file signature identifies it as a ${item.signature} — combined with high entropy, this strongly suggests a packed or encrypted executable, a common technique malware uses to evade static analysis.`
+      );
+    } else if (sigRisk === "medium") {
+      reasoning.push(
+        `Its file signature identifies it as a ${item.signature}. Archives can legitimately have high entropy (compression raises it naturally), so this is flagged but worth a closer manual look rather than treated as certain malware.`
+      );
+    } else if (sigRisk === "low") {
+      reasoning.push(
+        `Its file signature identifies it as a ${item.signature}, which is unusual — this file type doesn't normally carry this much entropy, which can indicate the file was tampered with or has embedded encrypted content.`
+      );
+    } else {
+      reasoning.push(
+        `No recognizable file signature was found in the header, so this is being treated as raw/unknown binary data — combined with high entropy, this is a common profile for ransomware payloads or already-encrypted files.`
+      );
+    }
+  } else {
+    reasoning.push(
+      `This file's entropy is ${item.entropy} bits/byte, which is below your configured threshold of ${threshold}, so it doesn't show the randomness pattern associated with packed or encrypted malicious payloads.`
+    );
+  }
+
+  let actionExplanation = "";
+  if (item.status === "KILLED & QUARANTINED") {
+    actionExplanation =
+      "Auto-Quarantine is enabled: any process holding this file open would be terminated, and the file itself moved out of its original location into an isolated quarantine folder so it can no longer be executed or accessed normally.";
+  } else if (item.status === "Flagged") {
+    actionExplanation =
+      "Auto-Quarantine is currently OFF (see Admin Controls), so this file was flagged and logged, but no automatic action was taken — a human analyst would need to review and act on it manually.";
+  } else if (item.status === "Monitored") {
+    actionExplanation = "This file is being tracked but has not crossed the danger threshold.";
+  } else {
+    actionExplanation = "No action was necessary — entropy stayed within the expected range for this file's type.";
+  }
+
+  return { reasoning: reasoning.join(" "), actionExplanation };
+}
+
 // ============================================================
 // SIMULATED LIVE TELEMETRY (background feed)
-// Swap the setInterval below for a WebSocket/SSE listener to
-// go from simulated to genuinely live off a real backend.
 // ============================================================
 const SYSTEM_FILE_POOL = [
   "svc_worker.dll", "update_cache.tmp", "session_store.db", "config.ini",
@@ -94,7 +152,6 @@ function generateSyntheticEvent() {
   return { name, entropy };
 }
 
-// CSV helper for export
 function toCSV(rows) {
   const headers = ["name", "entropy", "score", "status", "signature", "pid", "time"];
   const lines = [headers.join(",")];
@@ -105,7 +162,6 @@ function toCSV(rows) {
 }
 
 export default function CompleteRansomwareSuite() {
-  // --- CORE STATE ---
   const [activeTab, setActiveTab] = useState("user");
   const [userRole, setUserRole] = useState("Analyst");
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
@@ -135,15 +191,12 @@ export default function CompleteRansomwareSuite() {
     { id: 3, name: "svc_host_patch.dll", path: "/sys/svc_host_patch.dll", score: 65, entropy: 6.91, status: "Monitored", pid: 1044, time: "10:15", signature: "Windows PE Executable (.exe/.dll)" }
   ]);
 
-  // --- BATCH SCAN STATE ---
   const [batchResults, setBatchResults] = useState([]);
   const [batchScanning, setBatchScanning] = useState(false);
 
-  // --- WEBHOOK ALERT STATE ---
   const [webhookUrl, setWebhookUrl] = useState("");
   const [webhookStatus, setWebhookStatus] = useState("");
 
-  // --- NEGOTIATION CHAT STATE ---
   const [chatLogs, setChatLogs] = useState([
     { sender: "System", text: "Malicious payload payload_v2.exe detected. High entropy breach (7.85 bits/byte). Initiating AI Defense Core..." },
     { sender: "Attacker Note", text: "ALL YOUR FILES ARE ENCRYPTED! Send 0.5 BTC to 1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa to restore." }
@@ -155,9 +208,6 @@ export default function CompleteRansomwareSuite() {
 
   const idCounter = useRef(1000);
 
-  // ============================================================
-  // ALERT DISPATCH (webhook)
-  // ============================================================
   const sendWebhookAlert = async (threat) => {
     if (!webhookUrl) return;
     try {
@@ -174,11 +224,6 @@ export default function CompleteRansomwareSuite() {
     }
   };
 
-  // ============================================================
-  // SHARED EVENT PIPELINE — every detection (real upload, batch,
-  // or simulated feed) flows through here into threatList, which
-  // every chart and the table read directly from.
-  // ============================================================
   const pushThreatEvent = (name, entropy, signature = "Unknown / Raw Binary") => {
     const score = Math.min(100, Math.round((entropy / 8.0) * 100));
     const isDangerous = entropy >= entropyThreshold;
@@ -215,7 +260,6 @@ export default function CompleteRansomwareSuite() {
     return newThreat;
   };
 
-  // Live simulated feed loop
   useEffect(() => {
     if (!liveMonitoring) return;
     const interval = setInterval(() => {
@@ -226,9 +270,6 @@ export default function CompleteRansomwareSuite() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveMonitoring, entropyThreshold, autoQuarantine, aiNegotiation, webhookUrl]);
 
-  // ============================================================
-  // AUTH / RETRAIN (unchanged)
-  // ============================================================
   const handleAdminTabAccess = () => {
     if (isAdminAuthenticated) setActiveTab("admin");
     else setShowAuthModal(true);
@@ -271,9 +312,6 @@ export default function CompleteRansomwareSuite() {
     }, 400);
   };
 
-  // ============================================================
-  // SINGLE FILE UPLOAD -> real entropy + signature -> pipeline
-  // ============================================================
   const analyzeFile = (file) =>
     new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -309,9 +347,6 @@ export default function CompleteRansomwareSuite() {
     }
   };
 
-  // ============================================================
-  // BATCH SCAN — multiple files at once, own comparison view
-  // ============================================================
   const handleBatchUpload = async (e) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
@@ -332,9 +367,6 @@ export default function CompleteRansomwareSuite() {
     setBatchScanning(false);
   };
 
-  // ============================================================
-  // EXPORT
-  // ============================================================
   const downloadJSON = () => {
     const blob = new Blob([JSON.stringify(threatList, null, 2)], { type: "application/json" });
     const a = document.createElement("a");
@@ -355,11 +387,6 @@ export default function CompleteRansomwareSuite() {
     document.body.removeChild(a);
   };
 
-  // ============================================================
-  // REAL AI NEGOTIATION — calls /api/negotiate (serverless, holds
-  // the API key server-side). Falls back to a clear error message
-  // if the endpoint isn't deployed/configured yet.
-  // ============================================================
   const sendNegotiationMessage = async () => {
     const text = negotiationInput.trim();
     if (!text) return;
@@ -390,7 +417,6 @@ export default function CompleteRansomwareSuite() {
     }
   };
 
-  // Chart data — chronological (oldest -> newest)
   const chartData = [...threatList].reverse().map((t) => ({
     time: t.time,
     entropy: t.entropy,
@@ -449,7 +475,7 @@ export default function CompleteRansomwareSuite() {
             <div className="flex items-center space-x-2 bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800">
               <UserCheck className="w-4 h-4 text-slate-400" />
               <span className="text-xs font-semibold text-slate-400">Role:</span>
-              <span className="text-xs font-mono font-bold text-amber-400">{userRole} (Read-Only Admin)</span>
+              <span className="text-xs font-mono font-bold text-amber-400">{userRole}</span>
             </div>
           )}
         </div>
@@ -481,7 +507,7 @@ export default function CompleteRansomwareSuite() {
             )}
             {uploadSuccess && (
               <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 p-3 rounded-xl flex items-center space-x-2 text-xs font-mono">
-                <FileCheck className="w-4 h-4" /><span>File scanned and logged.</span>
+                <FileCheck className="w-4 h-4" /><span>File scanned and logged. Click Inspect on it below for details.</span>
               </div>
             )}
             {uploadError && (
@@ -550,6 +576,7 @@ export default function CompleteRansomwareSuite() {
                     <th className="pb-2">ENTROPY</th>
                     <th className="pb-2">SIGNATURE</th>
                     <th className="pb-2">STATUS</th>
+                    <th className="pb-2 text-right">INSPECT</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/50">
@@ -559,6 +586,9 @@ export default function CompleteRansomwareSuite() {
                       <td className={`py-2 ${r.entropy >= entropyThreshold ? "text-red-400" : "text-cyan-400"}`}>{r.entropy}</td>
                       <td className="py-2 text-slate-400">{r.signature}</td>
                       <td className="py-2 text-slate-300">{r.status}</td>
+                      <td className="py-2 text-right">
+                        <button onClick={() => setSelectedThreat(r)} className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[11px] font-sans">Inspect</button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -645,6 +675,17 @@ export default function CompleteRansomwareSuite() {
                 <input type="range" min="5.0" max="8.0" step="0.1" value={entropyThreshold} disabled={!isAdminAuthenticated}
                   onChange={(e) => setEntropyThreshold(parseFloat(e.target.value))}
                   className="w-full h-2 bg-slate-950 rounded-lg appearance-none cursor-pointer accent-cyan-400" />
+              </div>
+
+              <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+                <span className="text-xs text-slate-400">Auto-Quarantine Dangerous Files</span>
+                <button
+                  disabled={!isAdminAuthenticated}
+                  onClick={() => setAutoQuarantine((v) => !v)}
+                  className={`px-3 py-1 rounded-lg text-[11px] font-mono font-bold ${autoQuarantine ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/30" : "bg-slate-800 text-slate-400 border border-slate-700"}`}
+                >
+                  {autoQuarantine ? "ON" : "OFF"}
+                </button>
               </div>
 
               <div className="space-y-2 pt-2 border-t border-slate-800">
@@ -755,7 +796,9 @@ export default function CompleteRansomwareSuite() {
                     <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${item.entropy >= entropyThreshold ? "bg-red-500/20 text-red-400 border border-red-500/30" : "bg-slate-800 text-slate-300"}`}>{item.status}</span>
                   </td>
                   <td className="py-3 text-right">
-                    <button onClick={() => setSelectedThreat(item)} className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[11px] font-sans">Inspect</button>
+                    <button onClick={() => setSelectedThreat(item)} className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-[11px] font-sans flex items-center gap-1 ml-auto">
+                      <Info className="w-3 h-3" /> Inspect
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -763,6 +806,59 @@ export default function CompleteRansomwareSuite() {
           </table>
         </div>
       </section>
+
+      {/* INSPECT MODAL — this is what was missing */}
+      {selectedThreat && (() => {
+        const { reasoning, actionExplanation } = explainThreat(selectedThreat, entropyThreshold);
+        const isDangerous = selectedThreat.entropy >= entropyThreshold;
+        return (
+          <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-lg w-full space-y-4 max-h-[85vh] overflow-y-auto">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h3 className="font-bold text-slate-100 text-sm flex items-center gap-2">
+                    {isDangerous ? <AlertTriangle className="w-4 h-4 text-red-400" /> : <ShieldCheck className="w-4 h-4 text-emerald-400" />}
+                    {selectedThreat.name}
+                  </h3>
+                  <p className="text-[10px] text-slate-500 font-mono mt-1">Detected at {selectedThreat.time}{selectedThreat.pid ? ` · PID ${selectedThreat.pid}` : ""}</p>
+                </div>
+                <button onClick={() => setSelectedThreat(null)} className="text-slate-400 hover:text-slate-200">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 text-xs">
+                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
+                  <p className="text-slate-500">Entropy</p>
+                  <p className={`font-mono font-bold text-lg ${isDangerous ? "text-red-400" : "text-cyan-400"}`}>{selectedThreat.entropy}</p>
+                  <p className="text-[10px] text-slate-600">threshold: {entropyThreshold}</p>
+                </div>
+                <div className="bg-slate-950 p-3 rounded-xl border border-slate-800">
+                  <p className="text-slate-500">Signature</p>
+                  <p className="font-mono font-bold text-slate-200 text-[11px] mt-1">{selectedThreat.signature}</p>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">Why this verdict</p>
+                <p className="text-xs text-slate-300 leading-relaxed bg-slate-950 p-3 rounded-xl border border-slate-800">{reasoning}</p>
+              </div>
+
+              <div className="space-y-1.5">
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">What the prevention action means</p>
+                <p className="text-xs text-slate-300 leading-relaxed bg-slate-950 p-3 rounded-xl border border-slate-800">{actionExplanation}</p>
+              </div>
+
+              <div className="flex justify-between items-center pt-2 border-t border-slate-800">
+                <span className={`px-2 py-1 rounded text-[10px] font-bold ${isDangerous ? "bg-red-500/20 text-red-400 border border-red-500/30" : "bg-slate-800 text-slate-300"}`}>
+                  {selectedThreat.status}
+                </span>
+                <button onClick={() => setSelectedThreat(null)} className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg">Close</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* AUTH MODAL */}
       {showAuthModal && (
